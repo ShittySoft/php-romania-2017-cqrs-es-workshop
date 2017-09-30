@@ -12,6 +12,8 @@ use Bernard\QueueFactory\PersistentFactory;
 use Building\Domain\Aggregate\Building;
 use Building\Domain\Command;
 use Building\Domain\DomainEvent\CheckInAnomalyDetected;
+use Building\Domain\DomainEvent\UserCheckedIn;
+use Building\Domain\DomainEvent\UserCheckedOut;
 use Building\Domain\Repository\BuildingRepositoryInterface;
 use Building\Infrastructure\Repository\BuildingRepository;
 use Doctrine\DBAL\Connection;
@@ -32,6 +34,7 @@ use Prooph\EventStore\Adapter\PayloadSerializer\JsonPayloadSerializer;
 use Prooph\EventStore\Aggregate\AggregateRepository;
 use Prooph\EventStore\Aggregate\AggregateType;
 use Prooph\EventStore\EventStore;
+use Prooph\EventStore\Stream\StreamName;
 use Prooph\EventStoreBusBridge\EventPublisher;
 use Prooph\EventStoreBusBridge\TransactionManager;
 use Prooph\ServiceBus\Async\MessageProducer;
@@ -226,6 +229,38 @@ return new ServiceManager([
                     $command->username()
                 ));
             };
+        },
+        UserCheckedIn::class . '-projectors' => function (ContainerInterface $container) : array {
+            $eventStore = $container->get(EventStore::class);
+
+            return [
+                function (UserCheckedIn $event) use ($eventStore) {
+                    $events = $eventStore
+                        ->loadEventsByMetadataFrom(
+                            new StreamName('event_stream'),
+                            [
+                                'aggregate_id' => $event->aggregateId()
+                            ]
+                        );
+
+                    $users = [];
+
+                    foreach ($events as $pastEvent) {
+                        if ($pastEvent instanceof UserCheckedIn) {
+                            $users[$pastEvent->username()] = null;
+                        }
+
+                        if ($pastEvent instanceof UserCheckedOut) {
+                            unset($users[$pastEvent->username()]);
+                        }
+                    }
+
+                    \file_put_contents(
+                        __DIR__ . '/public/users-' . $event->aggregateId() . '.json',
+                        \json_encode(\array_keys($users))
+                    );
+                },
+            ];
         },
         CheckInAnomalyDetected::class . '-listeners' => function (ContainerInterface $container) : array {
             $commandBus = $container->get(CommandBus::class);
