@@ -231,36 +231,46 @@ return new ServiceManager([
             };
         },
         UserCheckedIn::class . '-projectors' => function (ContainerInterface $container) : array {
+            return [
+                $container->get('update-checked-in-users-projection'),
+            ];
+        },
+        UserCheckedOut::class . '-projectors' => function (ContainerInterface $container) : array {
+            return [
+                $container->get('update-checked-in-users-projection'),
+            ];
+        },
+        'update-checked-in-users-projection' => function (ContainerInterface $container) : callable {
             $eventStore = $container->get(EventStore::class);
 
-            return [
-                function (UserCheckedIn $event) use ($eventStore) {
-                    $events = $eventStore
-                        ->loadEventsByMetadataFrom(
-                            new StreamName('event_stream'),
-                            [
-                                'aggregate_id' => $event->aggregateId()
-                            ]
-                        );
+            return function () use ($eventStore) {
+                $events = $eventStore
+                    ->loadEventsByMetadataFrom(
+                        new StreamName('event_stream'),
+                        [
+                            'aggregate_type' => Building::class,
+                        ]
+                    );
 
-                    $users = [];
+                $users = [];
 
-                    foreach ($events as $pastEvent) {
-                        if ($pastEvent instanceof UserCheckedIn) {
-                            $users[$pastEvent->username()] = null;
-                        }
-
-                        if ($pastEvent instanceof UserCheckedOut) {
-                            unset($users[$pastEvent->username()]);
-                        }
+                foreach ($events as $pastEvent) {
+                    if ($pastEvent instanceof UserCheckedIn) {
+                        $users[$pastEvent->aggregateId()][$pastEvent->username()] = null;
                     }
 
+                    if ($pastEvent instanceof UserCheckedOut) {
+                        unset($users[$pastEvent->aggregateId()][$pastEvent->username()]);
+                    }
+                }
+
+                foreach ($users as $aggregateId => $checkedInUsers) {
                     \file_put_contents(
-                        __DIR__ . '/public/users-' . $event->aggregateId() . '.json',
-                        \json_encode(\array_keys($users))
+                        __DIR__ . '/public/users-' . $aggregateId . '.json',
+                        \json_encode(\array_keys($checkedInUsers))
                     );
-                },
-            ];
+                }
+            };
         },
         CheckInAnomalyDetected::class . '-listeners' => function (ContainerInterface $container) : array {
             $commandBus = $container->get(CommandBus::class);
